@@ -1,0 +1,30 @@
+{
+  "title": "Claude sekmeleri",
+  "empty": "Açık sekme yok",
+  "minimize": "Küçült",
+  "restore": "Büyüt",
+  "close": "Kapat",
+  "resetPos": "Sol alta geri al",
+  "hideList": "Listeyi gizle",
+  "status": {
+    "working": "çalışıyor",
+    "done": "bitti",
+    "waiting": "seni bekliyor",
+    "question": "soru soruyor",
+    "permission": "izin istiyor"
+  },
+  "say": {
+    "done": "bitti...",
+    "waiting": "seni... bekliyor...",
+    "question": "bir şey... soruyor...",
+    "permission": "izin... istiyor..."
+  },
+  "permTitle": "{tab} · izin istiyor",
+  "permWants": "{tool} kullanmak istiyor:",
+  "allow": "İzin ver",
+  "deny": "Reddet",
+  "inTab": "Sekmeye git",
+  "minutes": "{n} dk",
+  "hours": "{n} sa",
+  "now": "şimdi"
+}

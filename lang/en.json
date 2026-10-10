@@ -1,0 +1,30 @@
+{
+  "title": "Claude tabs",
+  "empty": "No open tabs",
+  "minimize": "Minimize",
+  "restore": "Restore",
+  "close": "Close",
+  "resetPos": "Back to bottom-left",
+  "hideList": "Hide list",
+  "status": {
+    "working": "working",
+    "done": "done",
+    "waiting": "waiting for you",
+    "question": "asking a question",
+    "permission": "needs permission"
+  },
+  "say": {
+    "done": "done...",
+    "waiting": "waiting... for you...",
+    "question": "has... a question...",
+    "permission": "needs... permission..."
+  },
+  "permTitle": "{tab} · needs permission",
+  "permWants": "Wants to use {tool}:",
+  "allow": "Allow",
+  "deny": "Deny",
+  "inTab": "Go to tab",
+  "minutes": "{n}m",
+  "hours": "{n}h",
+  "now": "now"
+}
