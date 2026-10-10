@@ -18,7 +18,8 @@ const uninstall = process.argv.includes('--uninstall');
 const hookPath = (name) => path.join(HERE, 'hooks', name).split(path.sep).join('/');
 const STATUS = `node "${hookPath('status.js')}"`;
 const PERMISSION = `node "${hookPath('permission.js')}"`;
-const ours = (cmd) => typeof cmd === 'string' && (cmd.includes(hookPath('status.js')) || cmd.includes(hookPath('permission.js')));
+const TITLE = `node "${hookPath('title.js')}"`;
+const ours = (cmd) => typeof cmd === 'string' && ['status.js', 'permission.js', 'title.js'].some((h) => cmd.includes(hookPath(h)));
 
 function readSettings() {
   if (!fs.existsSync(SETTINGS)) return {};
@@ -69,6 +70,8 @@ function main() {
   const status = { type: 'command', command: STATUS, timeout: 15, async: true };
   for (const event of ['UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd', 'PostToolUse']) addHook(settings, event, null, status);
   addHook(settings, 'PreToolUse', 'AskUserQuestion', status);
+  // Puts the queue number in front of the tab title ("4 · My tab"); sync, because it returns sessionTitle.
+  addHook(settings, 'UserPromptSubmit', null, { type: 'command', command: TITLE, timeout: 5 });
   // The tab shows its own prompt at the same time; the hook only waits for an answer from the sloth.
   addHook(settings, 'PermissionRequest', null, { type: 'command', command: PERMISSION, timeout: 600 });
   fs.mkdirSync(CLAUDE_HOME, { recursive: true });

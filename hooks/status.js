@@ -6,6 +6,7 @@
 // "waiting" = the last reply contains the askMarker regex from config.json (optional), e.g. "Your turn:".
 const fs = require('fs');
 const path = require('path');
+const { numberFor, stripNumber } = require('./numbers');
 
 const SLOTH_DIR = process.env.CLUMSY_SLOTH_DIR || path.join(__dirname, '..');
 const STATE_DIR = path.join(SLOTH_DIR, 'data', 'sessions');
@@ -127,7 +128,9 @@ function main(input) {
   if (input.transcript_path && fs.existsSync(input.transcript_path)) {
     entries = parseLines(readTail(input.transcript_path, TAIL_BYTES));
   }
-  const title = titleOf(input.transcript_path, entries);
+  // The panel shows the queue number on its own, so the stored title has no "4 · " prefix.
+  const title = stripNumber(titleOf(input.transcript_path, entries));
+  try { numberFor(path.join(SLOTH_DIR, 'data'), sid); } catch {}
   const base = title ? { title } : {};
 
   if (event === 'UserPromptSubmit') {

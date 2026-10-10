@@ -1,6 +1,6 @@
 {
   "title": "Claude tabs",
-  "empty": "No open tabs",
+  "empty": "Nothing needs you right now",
   "minimize": "Minimize",
   "restore": "Restore",
   "close": "Close",
@@ -26,5 +26,11 @@
   "inTab": "Go to tab",
   "minutes": "{n}m",
   "hours": "{n}h",
-  "now": "now"
+  "now": "now",
+  "board": "Claude queue",
+  "nowCalling": "Now calling",
+  "inLine": "In line",
+  "workingNow": "Working",
+  "footer": "Finished tabs are hidden · click a row to open the tab",
+  "call": "Number {n}... {say}"
 }

@@ -6,8 +6,11 @@ A slow, friendly sloth that sits on your Windows desktop and keeps an eye on eve
 ![The sloth sleeps, types and waves](docs/states.png)
 
 - **Sleeps** when no tab is working, **types** while a tab works, **waves** when a tab needs you.
-- Says what happened in a slow speech bubble: *"docs-site... is... done..."*.
-- **Click it** to see all tabs with their status. Click a row to jump straight to that tab.
+- **Queue numbers, like a hospital waiting room.** Every tab gets a number that stays with it, and the
+  number is put in front of the VS Code tab title too: *"4 · docs-site"*. The sloth announces calls in a
+  slow speech bubble: *"Number 4... needs... permission..."*.
+- **Click it** for the queue board: *Now calling* (the most urgent tab, big), *In line* (other tabs that
+  wait for you, oldest first) and *Working*. Finished tabs are hidden. Click a row to jump to that tab.
 - **Permission cards**: when a tab asks for permission, the same question shows up on the sloth
   at the same time. Answer in either place. The other one closes by itself.
 - Only shows tabs that are really open. Closed tabs drop off the list within seconds.
@@ -31,7 +34,8 @@ node install.js
 The installer:
 
 1. backs up your Claude Code `settings.json` to `settings.json.clumsy-sloth.bak`,
-2. adds two hooks to it (`hooks/status.js` for tab status, `hooks/permission.js` for permission cards),
+2. adds three hooks to it (`hooks/status.js` for tab status, `hooks/title.js` for the number in the tab title,
+   `hooks/permission.js` for permission cards),
 3. adds a login entry so the sloth starts with Windows,
 4. starts the sloth (bottom-left of your screen).
 
@@ -52,6 +56,8 @@ This removes the hooks and the login entry and stops the sloth. Then delete the 
 | --- | --- |
 | `panel.ps1` | The sloth itself: a WPF window drawn in code, run by Windows PowerShell. |
 | `hooks/status.js` | Claude Code hook. Writes each tab's status to `data/sessions/`. |
+| `hooks/title.js` | Claude Code `UserPromptSubmit` hook. Puts the queue number in front of the tab title. |
+| `hooks/numbers.js` | Hands out the queue numbers (one per Claude Code process, so `/clear` keeps it; numbers of closed tabs are reused). |
 | `hooks/permission.js` | Claude Code `PermissionRequest` hook. Puts the request on the sloth and waits for Allow / Deny. |
 | `start.vbs` | Starts the sloth without a console window. |
 | `config.json` | Created on first run: position, size, language. |

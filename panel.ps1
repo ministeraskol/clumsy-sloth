@@ -17,7 +17,12 @@ Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
 
 $created = $false
 $mutex = New-Object System.Threading.Mutex($true, "Local\ClumsySloth", [ref]$created)
-if (-not $created) { exit 0 }
+# Another sloth runs, or one is just shutting down (restart): wait a moment for it to let go.
+if (-not $created) {
+  $owned = $false
+  try { $owned = $mutex.WaitOne(5000) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
+  if (-not $owned) { exit 0 }
+}
 
 $dir = $PSScriptRoot
 $dataDir = Join-Path $dir "data"
@@ -42,6 +47,9 @@ $T = [System.IO.File]::ReadAllText($langFile, [System.Text.Encoding]::UTF8) | Co
 function Fmt([string]$s, [hashtable]$map) { foreach ($k in $map.Keys) { $s = $s.Replace("{" + $k + "}", [string]$map[$k]) }; return $s }
 
 function Brush($hex) { (New-Object System.Windows.Media.BrushConverter).ConvertFromString($hex) }
+# Bahnschrift is the DIN-like face Windows ships; it reads like a queue display board.
+$ui = New-Object System.Windows.Media.FontFamily("Bahnschrift, Segoe UI")
+function Up($s) { try { return ([string]$s).ToUpper([System.Globalization.CultureInfo]::GetCultureInfo($langCode)) } catch { return ([string]$s).ToUpper() } }
 $statusColor = @{ working = "#5AD08A"; done = "#8A8F99"; waiting = "#FFB347"; question = "#C084FC"; permission = "#F4505E" }
 $statusOrder = @{ permission = 0; waiting = 1; question = 2; working = 3; done = 4 }
 $attention = @("waiting", "question", "permission")
@@ -286,8 +294,8 @@ $bubble.Cursor = "Hand"
 
 # list panel
 $panel = New-Object System.Windows.Controls.Border
-$panel.Background = Brush "#F21B1D22"; $panel.BorderBrush = Brush "#33FFFFFF"; $panel.BorderThickness = 1
-$panel.CornerRadius = 14; $panel.Padding = "10,8,10,10"; $panel.Margin = 10; $panel.Width = 330
+$panel.Background = Brush "#F70E1116"; $panel.BorderBrush = Brush "#2A323C"; $panel.BorderThickness = 1
+$panel.CornerRadius = 16; $panel.Padding = "12,10,12,10"; $panel.Margin = 10; $panel.Width = 380
 $panel.Effect = $shadow
 $panelRoot = New-Object System.Windows.Controls.StackPanel
 $panel.Child = $panelRoot
@@ -298,8 +306,12 @@ $hide.Text = [string][char]0x2013; $hide.Foreground = Brush "#99FFFFFF"; $hide.F
 $hide.Cursor = "Hand"; $hide.ToolTip = $T.hideList; $hide.Background = [System.Windows.Media.Brushes]::Transparent
 [System.Windows.Controls.DockPanel]::SetDock($hide, "Right")
 $headTitle = New-Object System.Windows.Controls.TextBlock
-$headTitle.Text = $T.title; $headTitle.Foreground = Brush "#AAFFFFFF"; $headTitle.FontSize = 11.5; $headTitle.FontWeight = "SemiBold"
-$head.Children.Add($hide) | Out-Null; $head.Children.Add($headTitle) | Out-Null
+$headTitle.Text = Up $T.board; $headTitle.Foreground = Brush "#8A94A3"; $headTitle.FontSize = 12; $headTitle.FontWeight = "SemiBold"
+$headTitle.FontFamily = $ui; $headTitle.VerticalAlignment = "Center"
+$boardClock = New-Object System.Windows.Controls.TextBlock
+$boardClock.Foreground = Brush "#8A94A3"; $boardClock.FontSize = 12; $boardClock.FontFamily = $ui; $boardClock.VerticalAlignment = "Center"; $boardClock.Margin = "0,0,6,0"
+[System.Windows.Controls.DockPanel]::SetDock($boardClock, "Right")
+$head.Children.Add($hide) | Out-Null; $head.Children.Add($boardClock) | Out-Null; $head.Children.Add($headTitle) | Out-Null
 $cards = New-Object System.Windows.Controls.StackPanel
 $list = New-Object System.Windows.Controls.StackPanel
 $panelRoot.Children.Add($head) | Out-Null
@@ -348,7 +360,7 @@ function Live-Sessions {
     try { $j = [System.IO.File]::ReadAllText($f.FullName) | ConvertFrom-Json } catch { continue }
     if (-not $j.pid -or -not $j.sessionId) { continue }
     $proc = Get-Process -Id ([int]$j.pid) -ErrorAction SilentlyContinue
-    if ($proc -and $proc.ProcessName -eq "claude") { $live[[string]$j.sessionId] = $true }
+    if ($proc -and $proc.ProcessName -eq "claude") { $live[[string]$j.sessionId] = [string]$j.pid }
   }
   return $live
 }
@@ -356,6 +368,19 @@ function Load-Sessions {
   $items = @()
   $cutoff = (Get-Date).AddHours(-$maxAgeHours)
   $live = Live-Sessions
+  $script:sidPid = $(if ($null -ne $live) { $live } else { @{} })
+  # Queue numbers come from hooks\numbers.js: { "<pid or session id>": n }
+  $script:numbers = @{}
+  try {
+    $nj = [System.IO.File]::ReadAllText((Join-Path $dataDir "numbers.json")) | ConvertFrom-Json
+    foreach ($p in $nj.PSObject.Properties) { $script:numbers[[string]$p.Name] = [int]$p.Value }
+  } catch {}
+  # An open tab without a number (it has not done anything since the sloth started): hand out numbers.
+  $missing = @($script:sidPid.Keys | Where-Object { -not $script:numbers.ContainsKey([string]$script:sidPid[$_]) }).Count
+  if ($missing -gt 0 -and ((Get-Date) - $script:lastSync).TotalSeconds -gt 10) {
+    $script:lastSync = Get-Date
+    try { Start-Process node -ArgumentList ('"' + (Join-Path $dir "hooks\numbers.js") + '" --sync') -WindowStyle Hidden } catch { Log "sync: $_" }
+  }
   foreach ($f in Get-ChildItem $stateDir -Filter *.json -File -ErrorAction SilentlyContinue) {
     if ($f.LastWriteTime -lt $cutoff) { continue }
     try { $s = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch { continue }
@@ -409,99 +434,173 @@ function Answer($id, $behavior) {
 
 function Small-Button($text, $bg, $fg, $tag) {
   $b = New-Object System.Windows.Controls.Border
-  $b.CornerRadius = 8; $b.Padding = "10,6,10,6"; $b.Margin = "0,0,6,0"; $b.Cursor = "Hand"
+  $b.CornerRadius = 8; $b.Padding = "12,7,12,7"; $b.Margin = "0,0,8,0"; $b.Cursor = "Hand"
   $b.Background = Brush $bg
   $t = New-Object System.Windows.Controls.TextBlock
-  $t.Text = $text; $t.Foreground = Brush $fg; $t.FontSize = 12.5; $t.FontWeight = "SemiBold"; $t.HorizontalAlignment = "Center"
+  $t.Text = $text; $t.Foreground = Brush $fg; $t.FontSize = 13; $t.FontWeight = "SemiBold"; $t.HorizontalAlignment = "Center"
+  $t.FontFamily = $ui
   $b.Child = $t
   $b.Tag = $tag
-  $b.Add_MouseLeftButtonUp({ $t = $this.Tag; Answer $t.id $t.behavior; if ($t.sid) { Open-Tab $t.sid } })
+  # Handled: the row under the button must not also open the tab.
+  $b.Add_MouseLeftButtonUp({ param($s, $e) $e.Handled = $true; $t = $this.Tag; Answer $t.id $t.behavior; if ($t.sid) { Open-Tab $t.sid } })
   return $b
 }
 
-function Render-Cards {
-  $cards.Children.Clear()
+# ---------- queue board (hospital style: "3 -> NEEDS PERMISSION") ----------
+$arrow = [string][char]0x2192
+$tileColor = @{ permission = "#F4A3A9"; waiting = "#FFD08A"; question = "#DDBBFD" }
+function Num-Of($sid) {
+  $k = $script:sidPid[[string]$sid]
+  if ($k -and $script:numbers.ContainsKey([string]$k)) { return $script:numbers[[string]$k] }
+  if ($script:numbers.ContainsKey([string]$sid)) { return $script:numbers[[string]$sid] }
+  return $null
+}
+function Title-Of($sid, $fallback) {
+  $known = $script:sessions | Where-Object { $_.sessionId -eq $sid } | Select-Object -First 1
+  if ($known -and $known.title) { return [string]$known.title }
+  return [string]$fallback
+}
+function TB($text, $size, $color, $weight = "Normal") {
+  $t = New-Object System.Windows.Controls.TextBlock
+  $t.Text = [string]$text; $t.FontSize = $size; $t.Foreground = Brush $color; $t.FontWeight = $weight
+  $t.FontFamily = $ui; $t.TextTrimming = "CharacterEllipsis"
+  return $t
+}
+function Num-Tile($n, $bg, $fg, $size, $w) {
+  $b = New-Object System.Windows.Controls.Border
+  $b.Background = Brush $bg; $b.CornerRadius = [math]::Max(6, [math]::Round($size / 4)); $b.Width = $w
+  $b.Padding = "0,4,0,4"; $b.VerticalAlignment = "Center"
+  $t = TB $(if ($n) { [string]$n } else { "-" }) $size $fg "Bold"
+  $t.HorizontalAlignment = "Center"; $t.TextTrimming = "None"
+  $b.Child = $t
+  return $b
+}
+function Section($text, $color = "#8A94A3") {
+  $t = TB (Up $text) 11 $color "SemiBold"
+  $t.Margin = "4,12,0,6"
+  return $t
+}
+function Status-Text($st) { $l = $T.status.$st; if (-not $l) { $l = $st }; return [string]$l }
+function Hover-Row($row, $sid) {
+  $row.Cursor = "Hand"; $row.Tag = $sid
+  $row.Background = [System.Windows.Media.Brushes]::Transparent
+  $row.Add_MouseEnter({ $this.Background = Brush "#1AFFFFFF" })
+  $row.Add_MouseLeave({ $this.Background = [System.Windows.Media.Brushes]::Transparent })
+  $row.Add_MouseLeftButtonUp({ $script:seen[$this.Tag] = [double]::MaxValue; Open-Tab $this.Tag; Hide-Pop; Refresh-Mood })
+}
+function Ask-Box($r) {
+  $box = New-Object System.Windows.Controls.Border
+  $box.Background = Brush "#0A0D11"; $box.BorderBrush = Brush "#2A323C"; $box.BorderThickness = 1
+  $box.CornerRadius = 10; $box.Padding = "12,10,12,12"; $box.Margin = "0,12,0,0"
+  $sp = New-Object System.Windows.Controls.StackPanel
+  $w = TB (Fmt $T.permWants @{ tool = $r.tool }) 12 "#8A94A3"
+  $code = New-Object System.Windows.Controls.TextBlock
+  $code.Text = Short $r.detail 220; $code.FontFamily = "Consolas"; $code.FontSize = 12; $code.Foreground = Brush "#D6DBE3"
+  $code.TextWrapping = "Wrap"; $code.Margin = "0,5,0,10"
+  $btns = New-Object System.Windows.Controls.StackPanel
+  $btns.Orientation = "Horizontal"
+  $btns.Children.Add((Small-Button $T.allow "#2F9E5B" "#FFFFFF" @{ id = $r.id; behavior = "allow" })) | Out-Null
+  $btns.Children.Add((Small-Button $T.deny "#2A313B" "#F2F4F7" @{ id = $r.id; behavior = "deny" })) | Out-Null
+  $btns.Children.Add((Small-Button $T.inTab "Transparent" "#8A94A3" @{ id = $r.id; behavior = "pass"; sid = $r.sessionId })) | Out-Null
+  foreach ($x in @($w, $code, $btns)) { $sp.Children.Add($x) | Out-Null }
+  $box.Child = $sp
+  return $box
+}
+# Queue item: @{ kind = "req" | "ses"; sid; st; title; t; r }
+function Big-Call($q) {
+  $wrap = New-Object System.Windows.Controls.Border
+  $wrap.CornerRadius = 12; $wrap.Padding = "12,10,12,12"
+  $wrap.Background = Brush "#1C1417"; $wrap.BorderBrush = Brush "#3A2328"; $wrap.BorderThickness = 1
+  $sp = New-Object System.Windows.Controls.StackPanel
+  $lbl = TB ([string][char]0x25CF + "  " + (Up $T.nowCalling)) 11 "#F4505E" "Bold"
+  $call = New-Object System.Windows.Controls.DockPanel
+  $call.Margin = "0,8,0,0"
+  $c = $statusColor[$q.st]; if (-not $c) { $c = "#F2F4F7" }
+  $tile = Num-Tile (Num-Of $q.sid) $tileColor[$q.st] "#0E1116" 46 84
+  [System.Windows.Controls.DockPanel]::SetDock($tile, "Left")
+  $ar = TB $arrow 28 "#8A94A3"; $ar.Margin = "12,0,12,0"; $ar.VerticalAlignment = "Center"
+  [System.Windows.Controls.DockPanel]::SetDock($ar, "Left")
+  $texts = New-Object System.Windows.Controls.StackPanel
+  $texts.VerticalAlignment = "Center"
+  $st = TB (Up (Status-Text $q.st)) 22 $c "Bold"
+  $tt = TB $q.title 13 "#A7B0BD"; $tt.Margin = "0,3,0,0"
+  $ago = TB (Ago $q.t) 11.5 "#8A94A3"; $ago.Margin = "0,2,0,0"
+  foreach ($x in @($st, $tt, $ago)) { $texts.Children.Add($x) | Out-Null }
+  foreach ($x in @($tile, $ar, $texts)) { $call.Children.Add($x) | Out-Null }
+  $sp.Children.Add($lbl) | Out-Null; $sp.Children.Add($call) | Out-Null
+  if ($q.kind -eq "req") { $sp.Children.Add((Ask-Box $q.r)) | Out-Null }
+  $wrap.Child = $sp
+  if ($q.kind -ne "req") { Hover-Row $wrap $q.sid }
+  return $wrap
+}
+function Queue-Row($q, $working) {
+  $row = New-Object System.Windows.Controls.Border
+  $row.CornerRadius = 10; $row.Padding = "6,7,8,7"; $row.Margin = "0,0,0,2"
+  $sp = New-Object System.Windows.Controls.StackPanel
+  $dp = New-Object System.Windows.Controls.DockPanel
+  if ($working) { $tile = Num-Tile (Num-Of $q.sid) "#26303B" "#F2F4F7" 22 48 }
+  else { $tile = Num-Tile (Num-Of $q.sid) $tileColor[$q.st] "#0E1116" 22 48 }
+  [System.Windows.Controls.DockPanel]::SetDock($tile, "Left")
+  $ar = TB $arrow 18 "#5C6673"; $ar.Margin = "10,0,10,0"; $ar.VerticalAlignment = "Center"
+  [System.Windows.Controls.DockPanel]::SetDock($ar, "Left")
+  $ago = TB (Ago $q.t) 11.5 "#8A94A3"; $ago.VerticalAlignment = "Center"; $ago.Margin = "8,0,0,0"
+  [System.Windows.Controls.DockPanel]::SetDock($ago, "Right")
+  $texts = New-Object System.Windows.Controls.StackPanel
+  $texts.VerticalAlignment = "Center"
+  $c = $statusColor[$q.st]; if (-not $c) { $c = "#F2F4F7" }
+  if ($working) { $st = TB (Status-Text $q.st) 14 $c "SemiBold" } else { $st = TB (Up (Status-Text $q.st)) 15 $c "Bold" }
+  $tt = TB $q.title 12 "#8A94A3"; $tt.Margin = "0,1,0,0"
+  $texts.Children.Add($st) | Out-Null; $texts.Children.Add($tt) | Out-Null
+  foreach ($x in @($tile, $ar, $ago, $texts)) { $dp.Children.Add($x) | Out-Null }
+  $sp.Children.Add($dp) | Out-Null
+  if ($q.kind -eq "req") { $box = Ask-Box $q.r; $box.Margin = "58,8,0,4"; $sp.Children.Add($box) | Out-Null }
+  $row.Child = $sp
+  Hover-Row $row $q.sid
+  return $row
+}
+$script:boardSig = ""
+$script:lastSync = [datetime]::MinValue
+function Render-Board([switch]$force) {
+  $boardClock.Text = (Get-Date).ToString("HH:mm")
+  $reqSids = @{}
+  foreach ($r in $script:reqs) { $reqSids[[string]$r.sessionId] = $true }
+  $queue = @()
   foreach ($r in $script:reqs) {
-    $card = New-Object System.Windows.Controls.Border
-    $card.Background = Brush "#FFFBFAF7"; $card.CornerRadius = 12; $card.Padding = "12,10,12,10"; $card.Margin = "0,0,0,8"
-    $sp = New-Object System.Windows.Controls.StackPanel
-    $top = New-Object System.Windows.Controls.DockPanel
-    $left = New-Object System.Windows.Controls.TextBlock
-    $left.Tag = $r.id; $left.Foreground = Brush "#888"; $left.FontSize = 11; $left.Margin = "8,1,0,0"
-    [System.Windows.Controls.DockPanel]::SetDock($left, "Right")
-    $ttl = New-Object System.Windows.Controls.TextBlock
-    $ttl.Text = Fmt $T.permTitle @{ tab = (Short $r.title 34) }; $ttl.FontWeight = "Bold"; $ttl.FontSize = 13; $ttl.Foreground = Brush "#1B1B1B"
-    $ttl.TextTrimming = "CharacterEllipsis"
-    $known = $script:sessions | Where-Object { $_.sessionId -eq $r.sessionId } | Select-Object -First 1
-    if ($known -and $known.title) { $r.title = $known.title; $ttl.Text = Fmt $T.permTitle @{ tab = (Short $r.title 34) } }
-    $av = Avatar $r.sessionId $r.title 22
-    $av.Margin = "0,0,8,0"
-    [System.Windows.Controls.DockPanel]::SetDock($av, "Left")
-    $top.Children.Add($left) | Out-Null; $top.Children.Add($av) | Out-Null; $top.Children.Add($ttl) | Out-Null
-    $wants = New-Object System.Windows.Controls.TextBlock
-    $wants.Text = Fmt $T.permWants @{ tool = $r.tool }; $wants.FontSize = 12; $wants.Foreground = Brush "#444"; $wants.Margin = "0,3,0,0"
-    $code = New-Object System.Windows.Controls.Border
-    $code.Background = Brush "#EFECE6"; $code.CornerRadius = 6; $code.Padding = "7,5,7,5"; $code.Margin = "0,5,0,9"
-    $ct = New-Object System.Windows.Controls.TextBlock
-    $ct.Text = Short $r.detail 220; $ct.FontFamily = "Consolas"; $ct.FontSize = 11.5; $ct.Foreground = Brush "#333"; $ct.TextWrapping = "Wrap"
-    $code.Child = $ct
-    $btns = New-Object System.Windows.Controls.StackPanel
-    $btns.Orientation = "Horizontal"
-    $btns.Children.Add((Small-Button $T.allow "#2F9E5B" "#FFFFFF" @{ id = $r.id; behavior = "allow" })) | Out-Null
-    $btns.Children.Add((Small-Button $T.deny "#E6E2DA" "#333333" @{ id = $r.id; behavior = "deny" })) | Out-Null
-    $btns.Children.Add((Small-Button $T.inTab "Transparent" "#666666" @{ id = $r.id; behavior = "pass"; sid = $r.sessionId })) | Out-Null
-    foreach ($x in @($top, $wants, $code, $btns)) { $sp.Children.Add($x) | Out-Null }
-    $card.Child = $sp
-    $cards.Children.Add($card) | Out-Null
+    $queue += @{ kind = "req"; sid = [string]$r.sessionId; st = "permission"; title = (Title-Of $r.sessionId $r.title); t = [double]$r.created; r = $r }
   }
-  Update-Countdowns
+  $att = @($script:sessions | Where-Object { $attention -contains $_.status -and -not $reqSids.ContainsKey([string]$_.sessionId) } |
+    Sort-Object @{ e = { $o = $statusOrder[$_.status]; if ($null -eq $o) { 9 } else { $o } } }, @{ e = { [double]$_.updated } })
+  foreach ($s in $att) { $queue += @{ kind = "ses"; sid = [string]$s.sessionId; st = [string]$s.status; title = [string]$s.title; t = [double]$s.updated } }
+  $work = @($script:sessions | Where-Object { $_.status -eq "working" -and -not $reqSids.ContainsKey([string]$_.sessionId) } |
+    Sort-Object @{ e = { $n = Num-Of $_.sessionId; if ($n) { [int]$n } else { 999 } } })
+  # Re-draw only when something visible changed, so hover and clicks are not interrupted.
+  $sig = (($queue | ForEach-Object { "$($_.sid)|$($_.st)|$(Num-Of $_.sid)|$(Ago $_.t)|$($_.title)" }) -join ";") + "#" +
+         (($work | ForEach-Object { "$($_.sessionId)|$(Num-Of $_.sessionId)|$(Ago $_.updated)|$($_.title)" }) -join ";") + "#" + $boardClock.Text
+  if (-not $force -and $sig -eq $script:boardSig) { return }
+  $script:boardSig = $sig
+  $cards.Children.Clear(); $list.Children.Clear()
+  if ($queue.Count -gt 0) {
+    $cards.Children.Add((Big-Call $queue[0])) | Out-Null
+    if ($queue.Count -gt 1) {
+      $list.Children.Add((Section $T.inLine)) | Out-Null
+      for ($i = 1; $i -lt $queue.Count; $i++) { $list.Children.Add((Queue-Row $queue[$i] $false)) | Out-Null }
+    }
+  } else {
+    $e = TB $T.empty 13 "#8A94A3"; $e.Margin = "4,6,4,2"
+    $cards.Children.Add($e) | Out-Null
+  }
+  if ($work.Count -gt 0) {
+    $list.Children.Add((Section $T.workingNow)) | Out-Null
+    foreach ($s in $work) {
+      $list.Children.Add((Queue-Row @{ kind = "ses"; sid = [string]$s.sessionId; st = "working"; title = [string]$s.title; t = [double]$s.updated } $true)) | Out-Null
+    }
+  }
+  $foot = TB $T.footer 11 "#5C6673"; $foot.Margin = "4,10,4,0"; $foot.TextWrapping = "Wrap"
+  $list.Children.Add($foot) | Out-Null
 }
-function Update-Countdowns {
-  foreach ($card in $cards.Children) {
-    $left = $card.Child.Children[0].Children[0]   # waiting time is the first child of the header
-    $r = $script:reqs | Where-Object { $_.id -eq $left.Tag } | Select-Object -First 1
-    if ($r) { $left.Text = Ago $r.created }
-  }
-}
-
-function Render-List {
-  $list.Children.Clear()
-  if ($script:sessions.Count -eq 0) {
-    $t = New-Object System.Windows.Controls.TextBlock
-    $t.Text = $T.empty; $t.Foreground = Brush "#77FFFFFF"; $t.FontSize = 12; $t.Margin = "4,2,4,4"
-    $list.Children.Add($t) | Out-Null
-    return
-  }
-  foreach ($s in $script:sessions) {
-    $row = New-Object System.Windows.Controls.Border
-    $row.CornerRadius = 8; $row.Padding = "8,7,8,7"; $row.Margin = "0,0,0,2"; $row.Cursor = "Hand"
-    $row.BorderBrush = Brush "#14FFFFFF"; $row.BorderThickness = "0,0,0,1"
-    $row.Background = [System.Windows.Media.Brushes]::Transparent
-    $row.Tag = $s.sessionId
-    if ($s.detail) { $row.ToolTip = [string]$s.detail }
-    $dp = New-Object System.Windows.Controls.DockPanel
-    $c = $statusColor[$s.status]; if (-not $c) { $c = "#888888" }
-    $dot = Avatar $s.sessionId $s.title 28
-    $dot.Margin = "0,1,10,0"
-    [System.Windows.Controls.DockPanel]::SetDock($dot, "Left")
-    $ago = New-Object System.Windows.Controls.TextBlock
-    $ago.Text = Ago $s.updated; $ago.Foreground = Brush "#66FFFFFF"; $ago.FontSize = 10.5; $ago.Margin = "8,2,0,0"; $ago.VerticalAlignment = "Top"
-    [System.Windows.Controls.DockPanel]::SetDock($ago, "Right")
-    $texts = New-Object System.Windows.Controls.StackPanel
-    $name = New-Object System.Windows.Controls.TextBlock
-    $name.Text = $s.title; $name.Foreground = Brush "#F2FFFFFF"; $name.FontSize = 12.5; $name.TextTrimming = "CharacterEllipsis"
-    $state = New-Object System.Windows.Controls.TextBlock
-    $label = $T.status.($s.status); if (-not $label) { $label = $s.label }
-    $state.Text = [string][char]0x25CF + " " + $label; $state.Foreground = Brush $c; $state.FontSize = 11
-    $texts.Children.Add($name) | Out-Null; $texts.Children.Add($state) | Out-Null
-    $dp.Children.Add($dot) | Out-Null; $dp.Children.Add($ago) | Out-Null; $dp.Children.Add($texts) | Out-Null
-    $row.Child = $dp
-    $row.Add_MouseEnter({ $this.Background = Brush "#22FFFFFF" })
-    $row.Add_MouseLeave({ $this.Background = [System.Windows.Media.Brushes]::Transparent })
-    $row.Add_MouseLeftButtonUp({ $script:seen[$this.Tag] = [double]::MaxValue; Open-Tab $this.Tag; Hide-Pop; Refresh-Mood })
-    $list.Children.Add($row) | Out-Null
-  }
-}
+function Render-Cards { Render-Board -force }
+function Render-List { Render-Board }
+function Update-Countdowns { if ($script:popMode -eq "panel") { Render-Board } }
 
 # ---------- mood ----------
 $script:mood = ""
@@ -523,9 +622,14 @@ $script:say = ""; $script:sayShown = 0; $script:sayUntil = [datetime]::MinValue
 function Say($msg) {
   if ($script:popMode -eq "panel") { return }
   if ($script:popMode -eq "bubble") { $script:bubbleQueue.Enqueue($msg); return }
-  $text = $msg.text
-  $bubbleAvatarSlot.Content = Avatar $msg.sid $msg.title 26
-  $bubbleTab.Text = $msg.title; $bubbleTab.Foreground = Brush (Tab-Color $msg.sid)
+  # Announced like a hospital call: "3 numara... izin... istiyor..."
+  $n = Num-Of $msg.sid
+  $text = $(if ($n) { Fmt $T.call @{ n = $n; say = $msg.text } } else { $msg.text })
+  $bg = $tileColor[[string]$msg.st]; $fg = "#0E1116"
+  if (-not $bg) { $bg = "#26303B"; $fg = "#F2F4F7" }
+  $bubbleAvatarSlot.Content = Num-Tile $n $bg $fg 20 40
+  $bubbleTab.Text = $msg.title; $bubbleTab.Foreground = Brush "#6B7480"; $bubbleTab.FontFamily = $ui
+  $bubbleText.FontFamily = $ui; $bubbleText.FontSize = 14
   $script:say = $text; $script:sayShown = 0; $bubbleText.Text = ""
   $script:sayUntil = (Get-Date).AddSeconds(5 + $text.Length * 0.07)
   Show-Pop "bubble"
@@ -543,7 +647,7 @@ function Refresh-Sessions {
       if ($ageMin -gt 10) { $script:seen[$s.sessionId] = [double]$s.updated }
     } elseif ($old -ne $key -and $T.say.($s.status)) {
       if (($old -split "\|")[0] -ne $s.status -or $attention -contains $s.status) {
-        Say @{ sid = $s.sessionId; title = (Short $s.title 36); text = $T.say.($s.status) }
+        Say @{ sid = $s.sessionId; st = $s.status; title = (Short $s.title 36); text = $T.say.($s.status) }
       }
     }
     $script:prev[$s.sessionId] = $key

@@ -1,6 +1,6 @@
 {
   "title": "Claude sekmeleri",
-  "empty": "Açık sekme yok",
+  "empty": "Seni bekleyen sekme yok",
   "minimize": "Küçült",
   "restore": "Büyüt",
   "close": "Kapat",
@@ -26,5 +26,11 @@
   "inTab": "Sekmeye git",
   "minutes": "{n} dk",
   "hours": "{n} sa",
-  "now": "şimdi"
+  "now": "şimdi",
+  "board": "Claude sıra ekranı",
+  "nowCalling": "Şimdi çağrılan",
+  "inLine": "Sırada",
+  "workingNow": "Çalışıyor",
+  "footer": "Bitmiş sekmeler listede yok · satıra tıkla, sekmeye git",
+  "call": "{n} numara... {say}"
 }
