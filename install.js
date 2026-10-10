@@ -67,7 +67,7 @@ function main() {
   }
 
   const status = { type: 'command', command: STATUS, timeout: 15, async: true };
-  for (const event of ['UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd']) addHook(settings, event, null, status);
+  for (const event of ['UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd', 'PostToolUse']) addHook(settings, event, null, status);
   addHook(settings, 'PreToolUse', 'AskUserQuestion', status);
   // The tab shows its own prompt at the same time; the hook only waits for an answer from the sloth.
   addHook(settings, 'PermissionRequest', null, { type: 'command', command: PERMISSION, timeout: 600 });

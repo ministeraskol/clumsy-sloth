@@ -83,11 +83,21 @@ function answeredInTab(transcript, startSize, toolUseId) {
   } catch { return false; }
 }
 
+function config() {
+  try { return JSON.parse(fs.readFileSync(path.join(DATA_DIR, '..', 'config.json'), 'utf8').replace(/^﻿/, '')); } catch { return {}; }
+}
+
+function allow() {
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } }));
+}
+
 async function main(input) {
+  // In bypass mode Claude Code still asks for some tools (seen for Chrome MCP tools) and waits in the tab.
+  // Opt-in "allowInBypass": answer allow at once, so the tab's prompt closes as bypass mode promises.
+  if (input.permission_mode === 'bypassPermissions' && config().allowInBypass === true) return allow();
   if (process.env.CLAUDE_CODE_ENTRYPOINT !== 'claude-vscode') return;
   if (!panelAlive()) return;
-  // Bypass / dontAsk tabs never wait for an answer: Claude Code still calls this hook (seen for Chrome MCP
-  // tools) but approves on its own, so a card would only be a ghost that nothing listens to.
+  // Without allowInBypass, bypass / dontAsk prompts stay in the tab only: no card on the sloth.
   if (['bypassPermissions', 'dontAsk'].includes(input.permission_mode)) return;
   const sid = String(input.session_id || '');
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

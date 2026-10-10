@@ -169,7 +169,11 @@ try {
   $script:cfg.left = $j.left; $script:cfg.top = $j.top; $script:cfg.mini = [bool]$j.mini; $script:cfg.lang = $j.lang
 } catch {}
 function Save-Settings {
-  $o = @{ left = [math]::Round($win.Left); top = [math]::Round($win.Top); mini = $script:cfg.mini; lang = $script:cfg.lang }
+  # Keep keys the panel does not own (askMarker, allowInBypass, ...).
+  $o = New-Object PSObject
+  try { $o = [System.IO.File]::ReadAllText($settingsFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch {}
+  $mine = @{ left = [math]::Round($win.Left); top = [math]::Round($win.Top); mini = $script:cfg.mini; lang = $script:cfg.lang }
+  foreach ($k in $mine.Keys) { $o | Add-Member -NotePropertyName $k -NotePropertyValue $mine[$k] -Force }
   try { [System.IO.File]::WriteAllText($settingsFile, ($o | ConvertTo-Json -Compress)) } catch {}
 }
 

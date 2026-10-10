@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Tab status hook for Clumsy Sloth: writes one state file per VS Code Claude Code session to
 // <sloth>/data/sessions/<session>.json, which panel.ps1 reads. Runs async on UserPromptSubmit, Stop,
-// PreToolUse (AskUserQuestion), Notification and SessionEnd.
+// PreToolUse (AskUserQuestion), PostToolUse, Notification and SessionEnd.
 // Statuses: working | done | waiting | question | permission.
 // "waiting" = the last reply contains the askMarker regex from config.json (optional), e.g. "Your turn:".
 const fs = require('fs');
@@ -112,6 +112,14 @@ function main(input) {
 
   if (event === 'SessionEnd') {
     try { fs.unlinkSync(path.join(STATE_DIR, `${sid}.json`)); } catch {}
+    return;
+  }
+
+  // A tool ran: whatever the tab was asking for got answered, so it is working again.
+  if (event === 'PostToolUse') {
+    let cur = {};
+    try { cur = JSON.parse(fs.readFileSync(path.join(STATE_DIR, `${sid}.json`), 'utf8')); } catch { return; }
+    if (cur.status === 'permission' || cur.status === 'question') writeState(sid, { status: 'working' });
     return;
   }
 

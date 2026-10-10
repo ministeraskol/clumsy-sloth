@@ -59,7 +59,8 @@ This removes the hooks and the login entry and stops the sloth. Then delete the 
 **Permissions.** In the VS Code extension the hook and the tab's own prompt run side by side, and the
 first answer wins. If you answer on the sloth, the tab's prompt closes. If you answer in the tab,
 the hook sees the tool's result in the session transcript and removes the card. In tabs running
-with `bypassPermissions` or `dontAsk`, nothing is ever asked, so the sloth shows no cards there.
+with `bypassPermissions` or `dontAsk` the sloth shows no cards. Claude Code still asks in bypass mode for
+some tools (for example Claude in Chrome); set `allowInBypass` to answer those at once, so bypass really means no prompts.
 
 **Open tabs.** Claude Code keeps a small file per running process in `~/.claude/sessions/`.
 The sloth reads it to know which tabs are still open, so a closed tab never stays on the list.
@@ -72,6 +73,7 @@ The sloth reads it to know which tabs are still open, so a closed tab never stay
 | --- | --- |
 | `lang` | `"en"` or `"tr"`. Empty = Windows language. |
 | `askMarker` | Optional regex. When Claude's last reply contains it, the tab shows as *waiting for you* instead of *done*. Example: `"Your turn\\s*:"`. |
+| `allowInBypass` | `true` = in tabs running with `bypassPermissions`, approve the prompts Claude Code still shows (for example Claude in Chrome tools). Off by default. |
 | `left`, `top`, `mini` | Saved position and size. Right-click the sloth → *Back to bottom-left* to reset. |
 
 Adding a language: copy `lang/en.json` to `lang/<code>.json`, translate it, and set `"lang": "<code>"`.
