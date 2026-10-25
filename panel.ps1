@@ -11,6 +11,55 @@
 # Run: powershell -STA -WindowStyle Hidden -File panel.ps1
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
+# Windows blocks a background app from taking the foreground, so VS Code only flashes in the taskbar
+# when the vscode:// link reaches it. The sloth has just been clicked and owns the foreground: it hands
+# that right on and, if VS Code still is not in front, brings the window up itself.
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class SlothWin {
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool on);
+  [DllImport("user32.dll")] public static extern bool AllowSetForegroundWindow(int pid);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  static bool Has(int[] pids, uint pid) { foreach (int p in pids) { if (p == pid) return true; } return false; }
+  // Topmost visible window (Z order) of these processes whose title ends with the suffix.
+  public static IntPtr Top(int[] pids, string suffix) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      uint pid; GetWindowThreadProcessId(h, out pid);
+      if (!Has(pids, pid)) return true;
+      StringBuilder sb = new StringBuilder(512); GetWindowText(h, sb, 512);
+      if (!sb.ToString().EndsWith(suffix)) return true;
+      found = h; return false;
+    }, IntPtr.Zero);
+    return found;
+  }
+  public static bool InFront(int[] pids) {
+    uint pid; GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+    return Has(pids, pid);
+  }
+  public static void Front(IntPtr h) {
+    if (IsIconic(h)) ShowWindow(h, 9);
+    uint p; uint fg = GetWindowThreadProcessId(GetForegroundWindow(), out p);
+    uint me = GetCurrentThreadId();
+    bool joined = fg != me && AttachThreadInput(me, fg, true);
+    BringWindowToTop(h); SetForegroundWindow(h);
+    if (joined) AttachThreadInput(me, fg, false);
+  }
+}
+"@
 
 # Started from a VS Code terminal this is set, and Code.exe would then run as plain node.
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
@@ -204,7 +253,7 @@ $haloGlow = New-Object System.Windows.Media.Effects.DropShadowEffect
 $haloGlow.ShadowDepth = 0; $haloGlow.BlurRadius = 14; $haloGlow.Opacity = 1
 $halo.Effect = $haloGlow
 $stage.Children.Add($halo) | Out-Null
-# alert pill: a blinking "3 -> SENİ BEKLİYOR" label above the sloth, click opens that tab
+# alert pill: a blinking "3 -> SENI BEKLIYOR" label above the sloth, click opens that tab and brings VS Code to the front
 $alertWin = New-Object System.Windows.Window
 $alertWin.WindowStyle = "None"; $alertWin.AllowsTransparency = $true
 $alertWin.Background = [System.Windows.Media.Brushes]::Transparent
@@ -476,7 +525,24 @@ function Is-Attention($s) {
 }
 function Mark-Seen { foreach ($s in $script:sessions) { $script:seen[$s.sessionId] = [double]$s.updated } }
 
-function Open-Tab($sid) { Start-Process ("vscode://anthropic.claude-code/open?session=" + $sid) }
+function Open-Tab($sid) {
+  [void][SlothWin]::AllowSetForegroundWindow(-1)
+  Start-Process ("vscode://anthropic.claude-code/open?session=" + $sid)
+  $script:frontTries = 0
+  $frontTimer.Start()
+}
+# VS Code needs a moment to take the link; check a few times, then give up quietly.
+$frontTimer = New-Object System.Windows.Threading.DispatcherTimer
+$frontTimer.Interval = [TimeSpan]::FromMilliseconds(400)
+$frontTimer.Add_Tick({
+  try {
+    $script:frontTries++
+    $pids = [int[]]@(Get-Process Code -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+    if ($pids.Count -eq 0 -or [SlothWin]::InFront($pids) -or $script:frontTries -ge 4) { $frontTimer.Stop(); return }
+    $h = [SlothWin]::Top($pids, "Visual Studio Code")
+    if ($h -ne [IntPtr]::Zero) { [SlothWin]::Front($h) }
+  } catch { $frontTimer.Stop(); Log "front: $_" }
+})
 
 function Answer($id, $behavior) {
   try { [System.IO.File]::WriteAllText((Join-Path $ansDir "$id.json"), "{""behavior"":""$behavior""}") } catch {}
