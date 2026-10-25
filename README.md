@@ -10,7 +10,11 @@ A slow, friendly sloth that sits on your Windows desktop and keeps an eye on eve
   number is put in front of the VS Code tab title too: *"4 · docs-site"*. The sloth announces calls in a
   slow speech bubble: *"Number 4... needs... permission..."*.
 - **Click it** for the queue board: *Now calling* (the most urgent tab, big), *In line* (other tabs that
-  wait for you, oldest first) and *Working*. Finished tabs are hidden. Click a row to jump to that tab.
+  wait for you, oldest first), *Working* and *Done* (finished tabs that are still open). Each row shows the
+  tab's topic and, when known, the project folder it works in. Click a row to jump to that tab.
+- **Open it when you want it.** Start menu → *Clumsy Sloth* opens the sloth; clicking it again closes it.
+  It does not start with Windows unless you install with `--autostart`. Numbers and tab titles keep working
+  while it is closed.
 - **Permission cards**: when a tab asks for permission, the same question shows up on the sloth
   at the same time. Answer in either place. The other one closes by itself.
 - Only shows tabs that are really open. Closed tabs drop off the list within seconds.
@@ -36,8 +40,10 @@ The installer:
 1. backs up your Claude Code `settings.json` to `settings.json.clumsy-sloth.bak`,
 2. adds three hooks to it (`hooks/status.js` for tab status, `hooks/title.js` for the number in the tab title,
    `hooks/permission.js` for permission cards),
-3. adds a login entry so the sloth starts with Windows,
+3. adds a Start menu entry *Clumsy Sloth* (one click opens the sloth, the next click closes it),
 4. starts the sloth (bottom-left of your screen).
+
+Want it to start with Windows too? Run `node install.js --autostart`.
 
 The sloth runs from the folder you cloned, so keep the folder where it is.
 Already open tabs pick up the hooks with their next message.
@@ -48,7 +54,7 @@ Already open tabs pick up the hooks with their next message.
 node install.js --uninstall
 ```
 
-This removes the hooks and the login entry and stops the sloth. Then delete the folder.
+This removes the hooks, the Start menu entry and the login entry and stops the sloth. Then delete the folder.
 
 ## How it works
 
@@ -56,10 +62,12 @@ This removes the hooks and the login entry and stops the sloth. Then delete the 
 | --- | --- |
 | `panel.ps1` | The sloth itself: a WPF window drawn in code, run by Windows PowerShell. |
 | `hooks/status.js` | Claude Code hook. Writes each tab's status to `data/sessions/`. |
-| `hooks/title.js` | Claude Code `UserPromptSubmit` hook. Puts the queue number in front of the tab title. |
+| `hooks/title.js` | Claude Code `UserPromptSubmit` hook. Puts the queue number in front of the tab title. A title you set with `/rename` is kept. |
+| `hooks/tabinfo.js` | Optional tab topic and project. Topic: a `Konu: <topic>` line at the top of Claude's first reply (use it in your CLAUDE.md if you like). Project: the `Projeler/<name>` folder the tab worked in. Without them the tab keeps Claude Code's own title. |
 | `hooks/numbers.js` | Hands out the queue numbers (one per Claude Code process, so `/clear` keeps it; numbers of closed tabs are reused). |
 | `hooks/permission.js` | Claude Code `PermissionRequest` hook. Puts the request on the sloth and waits for Allow / Deny. |
-| `start.vbs` | Starts the sloth without a console window. |
+| `start.vbs` | Opens the sloth without a console window, or closes it when it runs (the Start menu entry runs this). |
+| `make-icon.ps1` | Draws `sloth.ico`, the Start menu icon, from the sloth art in `panel.ps1`. |
 | `config.json` | Created on first run: position, size, language. |
 
 **Permissions.** In the VS Code extension the hook and the tab's own prompt run side by side, and the

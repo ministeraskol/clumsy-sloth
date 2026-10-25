@@ -375,14 +375,17 @@ function Load-Sessions {
     $nj = [System.IO.File]::ReadAllText((Join-Path $dataDir "numbers.json")) | ConvertFrom-Json
     foreach ($p in $nj.PSObject.Properties) { $script:numbers[[string]$p.Name] = [int]$p.Value }
   } catch {}
-  # An open tab without a number (it has not done anything since the sloth started): hand out numbers.
-  $missing = @($script:sidPid.Keys | Where-Object { -not $script:numbers.ContainsKey([string]$script:sidPid[$_]) }).Count
+  # An open tab without a number or a state file (it has not done anything since the sloth started):
+  # status.js --seed hands out numbers and writes its state from Claude Code's session file.
+  $missing = @($script:sidPid.Keys | Where-Object {
+    -not $script:numbers.ContainsKey([string]$script:sidPid[$_]) -or -not (Test-Path (Join-Path $stateDir "$_.json")) }).Count
   if ($missing -gt 0 -and ((Get-Date) - $script:lastSync).TotalSeconds -gt 10) {
     $script:lastSync = Get-Date
-    try { Start-Process node -ArgumentList ('"' + (Join-Path $dir "hooks\numbers.js") + '" --sync') -WindowStyle Hidden } catch { Log "sync: $_" }
+    try { Start-Process node -ArgumentList ('"' + (Join-Path $dir "hooks\status.js") + '" --seed') -WindowStyle Hidden } catch { Log "seed: $_" }
   }
   foreach ($f in Get-ChildItem $stateDir -Filter *.json -File -ErrorAction SilentlyContinue) {
-    if ($f.LastWriteTime -lt $cutoff) { continue }
+    # Old files are skipped unless their tab is still open: tabs stay open for days.
+    if ($f.LastWriteTime -lt $cutoff -and ($null -eq $live -or -not $live.ContainsKey($f.BaseName))) { continue }
     try { $s = [System.IO.File]::ReadAllText($f.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json } catch { continue }
     $fresh = ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - [double]$s.updated) -lt 15000
     if ($null -ne $live -and -not $live.ContainsKey([string]$s.sessionId) -and -not $fresh) {
@@ -460,6 +463,17 @@ function Title-Of($sid, $fallback) {
   if ($known -and $known.title) { return [string]$known.title }
   return [string]$fallback
 }
+# Third line of a row: the Projeler folder the tab works in (from hooks\status.js), or nothing.
+function Project-Line($q, $size) {
+  $known = $script:sessions | Where-Object { $_.sessionId -eq $q.sid } | Select-Object -First 1
+  if (-not ($known -and $known.project)) { return $null }
+  $p = TB ("Projeler/" + [string]$known.project) $size "#6E8FB5"; $p.Margin = "0,1,0,0"
+  return $p
+}
+function Label-Of($q) {
+  $known = $script:sessions | Where-Object { $_.sessionId -eq $q.sid } | Select-Object -First 1
+  return [string]$q.title + "|" + [string]$known.project
+}
 function TB($text, $size, $color, $weight = "Normal") {
   $t = New-Object System.Windows.Controls.TextBlock
   $t.Text = [string]$text; $t.FontSize = $size; $t.Foreground = Brush $color; $t.FontWeight = $weight
@@ -524,8 +538,9 @@ function Big-Call($q) {
   $texts.VerticalAlignment = "Center"
   $st = TB (Up (Status-Text $q.st)) 22 $c "Bold"
   $tt = TB $q.title 13 "#A7B0BD"; $tt.Margin = "0,3,0,0"
+  $pj = Project-Line $q 11.5
   $ago = TB (Ago $q.t) 11.5 "#8A94A3"; $ago.Margin = "0,2,0,0"
-  foreach ($x in @($st, $tt, $ago)) { $texts.Children.Add($x) | Out-Null }
+  foreach ($x in @($st, $tt, $pj, $ago)) { if ($x) { $texts.Children.Add($x) | Out-Null } }
   foreach ($x in @($tile, $ar, $texts)) { $call.Children.Add($x) | Out-Null }
   $sp.Children.Add($lbl) | Out-Null; $sp.Children.Add($call) | Out-Null
   if ($q.kind -eq "req") { $sp.Children.Add((Ask-Box $q.r)) | Out-Null }
@@ -551,6 +566,7 @@ function Queue-Row($q, $working) {
   if ($working) { $st = TB (Status-Text $q.st) 14 $c "SemiBold" } else { $st = TB (Up (Status-Text $q.st)) 15 $c "Bold" }
   $tt = TB $q.title 12 "#8A94A3"; $tt.Margin = "0,1,0,0"
   $texts.Children.Add($st) | Out-Null; $texts.Children.Add($tt) | Out-Null
+  $pj = Project-Line $q 11; if ($pj) { $texts.Children.Add($pj) | Out-Null }
   foreach ($x in @($tile, $ar, $ago, $texts)) { $dp.Children.Add($x) | Out-Null }
   $sp.Children.Add($dp) | Out-Null
   if ($q.kind -eq "req") { $box = Ask-Box $q.r; $box.Margin = "58,8,0,4"; $sp.Children.Add($box) | Out-Null }
@@ -573,9 +589,12 @@ function Render-Board([switch]$force) {
   foreach ($s in $att) { $queue += @{ kind = "ses"; sid = [string]$s.sessionId; st = [string]$s.status; title = [string]$s.title; t = [double]$s.updated } }
   $work = @($script:sessions | Where-Object { $_.status -eq "working" -and -not $reqSids.ContainsKey([string]$_.sessionId) } |
     Sort-Object @{ e = { $n = Num-Of $_.sessionId; if ($n) { [int]$n } else { 999 } } })
+  # Finished tabs that are still open: every open tab is on the board, so it is clear what each one did.
+  $done = @($script:sessions | Where-Object { $_.status -eq "done" -and -not $reqSids.ContainsKey([string]$_.sessionId) } |
+    Sort-Object @{ e = { $n = Num-Of $_.sessionId; if ($n) { [int]$n } else { 999 } } })
   # Re-draw only when something visible changed, so hover and clicks are not interrupted.
-  $sig = (($queue | ForEach-Object { "$($_.sid)|$($_.st)|$(Num-Of $_.sid)|$(Ago $_.t)|$($_.title)" }) -join ";") + "#" +
-         (($work | ForEach-Object { "$($_.sessionId)|$(Num-Of $_.sessionId)|$(Ago $_.updated)|$($_.title)" }) -join ";") + "#" + $boardClock.Text
+  $sig = (($queue | ForEach-Object { "$($_.sid)|$($_.st)|$(Num-Of $_.sid)|$(Ago $_.t)|$(Label-Of $_)" }) -join ";") + "#" +
+         ((@($work) + @($done) | ForEach-Object { "$($_.sessionId)|$($_.status)|$(Num-Of $_.sessionId)|$(Ago $_.updated)|$($_.title)|$($_.project)" }) -join ";") + "#" + $boardClock.Text
   if (-not $force -and $sig -eq $script:boardSig) { return }
   $script:boardSig = $sig
   $cards.Children.Clear(); $list.Children.Clear()
@@ -593,6 +612,12 @@ function Render-Board([switch]$force) {
     $list.Children.Add((Section $T.workingNow)) | Out-Null
     foreach ($s in $work) {
       $list.Children.Add((Queue-Row @{ kind = "ses"; sid = [string]$s.sessionId; st = "working"; title = [string]$s.title; t = [double]$s.updated } $true)) | Out-Null
+    }
+  }
+  if ($done.Count -gt 0) {
+    $list.Children.Add((Section $T.doneNow)) | Out-Null
+    foreach ($s in $done) {
+      $list.Children.Add((Queue-Row @{ kind = "ses"; sid = [string]$s.sessionId; st = "done"; title = [string]$s.title; t = [double]$s.updated } $true)) | Out-Null
     }
   }
   $foot = TB $T.footer 11 "#5C6673"; $foot.Margin = "4,10,4,0"; $foot.TextWrapping = "Wrap"

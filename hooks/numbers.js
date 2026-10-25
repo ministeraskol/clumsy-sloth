@@ -85,7 +85,7 @@ function syncAll(dataDir) {
   for (const s of sids.sort((a, b) => a.started - b.started)) numberFor(dataDir, s.sid);
 }
 
-module.exports = { numberFor, stripNumber };
+module.exports = { numberFor, stripNumber, syncAll };
 
 if (require.main === module && process.argv.includes('--sync')) {
   syncAll(path.join(process.env.CLUMSY_SLOTH_DIR || path.join(__dirname, '..'), 'data'));

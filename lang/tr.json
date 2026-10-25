@@ -31,6 +31,7 @@
   "nowCalling": "Şimdi çağrılan",
   "inLine": "Sırada",
   "workingNow": "Çalışıyor",
-  "footer": "Bitmiş sekmeler listede yok · satıra tıkla, sekmeye git",
+  "doneNow": "Bitti",
+  "footer": "Satıra tıkla, sekmeye git",
   "call": "{n} numara... {say}"
 }

@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // UserPromptSubmit hook for Clumsy Sloth: puts the tab's queue number in front of its title,
-// e.g. "4 · Picsart earn campaign", so the number on the sloth's screen is also on the VS Code tab.
+// e.g. "4 · Sekmeler", so the number on the sloth's screen is also on the VS Code tab. The name is the tab's
+// "Konu:" topic (hooks/tabinfo.js), else Claude Code's generated title; a hand-made /rename is kept.
 // Uses the hook's sessionTitle output (same effect as /rename). Claude names a tab after its first
 // reply, so the number shows from the second message on. Runs synchronously but only for a few ms.
 const fs = require('fs');
 const path = require('path');
 const { numberFor, stripNumber } = require('./numbers');
+const { topicOf } = require('./tabinfo');
 
 const SLOTH_DIR = process.env.CLUMSY_SLOTH_DIR || path.join(__dirname, '..');
 const DATA_DIR = path.join(SLOTH_DIR, 'data');
@@ -41,8 +43,11 @@ function main(input) {
   const sid = String(input.session_id || '');
   if (!/^[0-9a-f-]{36}$/i.test(sid)) return;
   const n = numberFor(DATA_DIR, sid);
-  const { custom, ai } = titles(String(input.transcript_path || ''));
-  const base = stripNumber(custom || ai).trim();
+  const transcript = String(input.transcript_path || '');
+  const { custom, ai } = titles(transcript);
+  // A title without our "n · " prefix was set by hand (/rename) and wins; otherwise the tab's "Konu:" topic.
+  const renamed = custom && !/^\d+\s*·\s*/.test(custom);
+  const base = (renamed ? custom : topicOf(transcript) || stripNumber(custom || ai)).trim();
   if (!base) return;
   const wanted = `${n} · ${base}`;
   if (custom === wanted) return;
