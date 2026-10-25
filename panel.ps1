@@ -197,6 +197,57 @@ $stage = New-Object System.Windows.Controls.Grid
 $stage.Background = Brush "#01000000"   # nearly transparent but hit-testable, so the whole square drags
 $stage.Cursor = "Hand"
 $win.Content = $stage
+# alert halo: blinks behind the sloth while a tab waits for you and you have not looked yet
+$halo = New-Object System.Windows.Shapes.Ellipse
+$halo.StrokeThickness = 4; $halo.IsHitTestVisible = $false; $halo.Visibility = "Collapsed"
+$haloGlow = New-Object System.Windows.Media.Effects.DropShadowEffect
+$haloGlow.ShadowDepth = 0; $haloGlow.BlurRadius = 14; $haloGlow.Opacity = 1
+$halo.Effect = $haloGlow
+$stage.Children.Add($halo) | Out-Null
+# alert pill: a blinking "3 -> SENİ BEKLİYOR" label above the sloth, click opens that tab
+$alertWin = New-Object System.Windows.Window
+$alertWin.WindowStyle = "None"; $alertWin.AllowsTransparency = $true
+$alertWin.Background = [System.Windows.Media.Brushes]::Transparent
+$alertWin.Topmost = $true; $alertWin.ShowInTaskbar = $false; $alertWin.ResizeMode = "NoResize"
+$alertWin.SizeToContent = "WidthAndHeight"; $alertWin.ShowActivated = $false
+$alertPill = New-Object System.Windows.Controls.Border
+$alertPill.CornerRadius = 11; $alertPill.Padding = "12,6,12,7"; $alertPill.Margin = 6; $alertPill.Cursor = "Hand"
+$alertPill.BorderBrush = Brush "#1B1B1B"; $alertPill.BorderThickness = 2
+$alertText = New-Object System.Windows.Controls.TextBlock
+$alertText.FontSize = 14; $alertText.FontWeight = "Bold"; $alertText.Foreground = Brush "#1B1B1B"
+$alertPill.Child = $alertText
+$alertWin.Content = $alertPill
+$script:alertColor = ""; $script:alertKey = ""; $script:alertSid = ""
+function Place-Alert {
+  if (-not $alertWin.IsVisible) { return }
+  $w = $alertWin.ActualWidth; $h = $alertWin.ActualHeight
+  $wa = WorkArea-At ($win.Left + $win.Width / 2) ($win.Top + $win.Height / 2)
+  $x = $win.Left + $win.Width / 2 - $w / 2
+  if ($win.Top + $win.Height / 2 -gt ($wa.T + $wa.B) / 2) { $y = $win.Top - $h + 4 } else { $y = $win.Top + $win.Height - 4 }
+  $alertWin.Left = [math]::Max($wa.L, [math]::Min($x, $wa.R - $w))
+  $alertWin.Top = [math]::Max($wa.T, [math]::Min($y, $wa.B - $h))
+}
+$alertWin.Add_SizeChanged({ Place-Alert })
+function Set-Alert($hex, $text, $sid) {
+  $key = "$hex|$text"
+  $script:alertSid = $sid
+  if ($key -eq $script:alertKey) { return }
+  $script:alertKey = $key; $script:alertColor = $hex
+  if (-not $hex) { $halo.Visibility = "Collapsed"; $badge.Opacity = 1; $alertWin.Hide(); return }
+  $c = [System.Windows.Media.ColorConverter]::ConvertFromString($hex)
+  $halo.Stroke = New-Object System.Windows.Media.SolidColorBrush($c)
+  $halo.Fill = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(70, $c.R, $c.G, $c.B))
+  $haloGlow.Color = $c
+  $halo.Visibility = "Visible"
+  $alertPill.Background = New-Object System.Windows.Media.SolidColorBrush($c)
+  $alertText.Text = $text; $alertText.FontFamily = $ui
+  if (-not $alertWin.IsVisible) { $alertWin.Show() }
+  $alertWin.UpdateLayout(); Place-Alert
+}
+$alertPill.Add_MouseLeftButtonUp({
+  if ($script:alertSid) { $script:seen[$script:alertSid] = [double]::MaxValue; Open-Tab $script:alertSid } else { Open-Panel }
+  Refresh-Mood
+})
 foreach ($st in @("sleep", "work", "call")) { $stage.Children.Add($sloth[$st].root) | Out-Null }
 
 # badge: number of tabs waiting for you
@@ -239,7 +290,7 @@ function Apply-Size {
   $btnMin.Child.Text = $(if ($script:cfg.mini) { [string][char]0x25A1 } else { [string][char]0x2013 })
   $tools.Margin = $(if ($script:cfg.mini) { "0,-2,-2,0" } else { "0,2,2,0" })
 }
-function Toggle-Mini { $script:cfg.mini = -not $script:cfg.mini; Apply-Size; Clamp-Win; Save-Settings; Place-Pop }
+function Toggle-Mini { $script:cfg.mini = -not $script:cfg.mini; Apply-Size; Clamp-Win; Save-Settings; Place-Pop; Place-Alert }
 
 # ---------- screen helpers (WPF units) ----------
 function Dpi {
@@ -640,6 +691,18 @@ function Refresh-Mood {
   $busy = @($script:sessions | Where-Object { $_.status -eq "working" -and [double]$_.updated -gt $cut }).Count
   if ($waiting -gt 0) { Set-Mood "call" } elseif ($busy -gt 0) { Set-Mood "work" } else { Set-Mood "sleep" }
   if ($waiting -gt 0) { $badgeText.Text = [string]$waiting; $badge.Visibility = "Visible" } else { $badge.Visibility = "Collapsed" }
+  # halo colour = the most urgent unseen call (permission red, waiting orange, question purple)
+  $top = $null; $sid = ""
+  if ($script:reqs.Count -gt 0) { $top = "permission"; $sid = [string]$script:reqs[0].sessionId }
+  else {
+    $s = @($script:sessions | Where-Object { Is-Attention $_ } | Sort-Object @{ e = { $statusOrder[$_.status] } }, @{ e = { [double]$_.updated } })[0]
+    if ($s) { $top = [string]$s.status; $sid = [string]$s.sessionId }
+  }
+  if (-not $top) { Set-Alert "" "" ""; return }
+  $n = Num-Of $sid
+  $label = [char]0x26A0 + "  " + $(if ($n) { "$n $arrow " } else { "" }) + (Up (Status-Text $top))
+  if ($waiting -gt 1) { $label += "  (+" + ($waiting - 1) + ")" }
+  Set-Alert $statusColor[$top] $label $sid
 }
 
 # ---------- speech ----------
@@ -714,7 +777,7 @@ $stage.Add_MouseLeftButtonDown({
   if ([math]::Abs($win.Left - $x0) -lt 3 -and [math]::Abs($win.Top - $y0) -lt 3) {
     if ($script:popMode -eq "panel") { $script:autoOpened = $false; Hide-Pop } else { Open-Panel }
   } else {
-    Clamp-Win; Save-Settings; Place-Pop
+    Clamp-Win; Save-Settings; Place-Pop; Place-Alert
   }
 })
 $btnMin.Add_MouseLeftButtonDown({ param($s, $e) $e.Handled = $true; Toggle-Mini })
@@ -753,6 +816,13 @@ function Animate {
     $p.armRot.Angle = -16 * (Wave01 $t 2.4)
     $p.headMove.Y = -1 * (Wave01 $t 2.4)
   }
+  # blink: about one flash per second, hard on/off so it catches the eye from the side
+  if ($script:alertColor) {
+    $on = (($t % 1.0) -lt 0.6)
+    $halo.Opacity = $(if ($on) { 1 } else { 0.12 })
+    $badge.Opacity = $(if ($on) { 1 } else { 0.35 })
+    $alertPill.Opacity = $(if ($on) { 1 } else { 0.25 })
+  }
   # slow speech: one character every 70 ms, then hold, then next queued line
   if ($script:popMode -eq "bubble") {
     if ($script:sayShown -lt $script:say.Length) { $script:sayShown++; $bubbleText.Text = $script:say.Substring(0, $script:sayShown) }
@@ -784,7 +854,7 @@ $win.Add_SourceInitialized({
 })
 $win.Add_Loaded({
   Clamp-Win
-  $pop.Owner = $win
+  $pop.Owner = $win; $alertWin.Owner = $win
   try { [System.IO.File]::WriteAllText($aliveFile, [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) } catch {}
   Refresh-Sessions; Refresh-Requests
   if (-not $script:mood) { Set-Mood "sleep" }
